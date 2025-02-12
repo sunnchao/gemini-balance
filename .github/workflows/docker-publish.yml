@@ -1,11 +1,7 @@
 name: Docker Image CI
 
 on:
-  push:
-    # branches: [ "main" ]
-    tags: [ 'v*.*.*' ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -35,7 +31,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GT_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
