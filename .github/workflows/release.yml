@@ -6,9 +6,10 @@ on:
       - 'v*' # 当推送以 "v" 开头的标签时触发（如 v1.0.0, v2.1.0）
 
 jobs:
-  release:
+  update-release-draft:
     permissions:
-      contents: write    # 添加写入权限
+      contents: write
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       # Step 1: 检出代码库
