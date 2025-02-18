@@ -1,3 +1,4 @@
+
 name: Docker Image CI
 
 on:
@@ -33,11 +34,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GT_TOKEN }}
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }} # Replace with your Docker Hub password secret
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ghcr.io/${{ github.repository }}
+            sunchaowang/gemini-balance
           tags: |
             type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=semver,pattern={{version}}
