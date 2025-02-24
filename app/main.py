@@ -11,7 +11,6 @@ from app.core.config import settings
 from app.api import gemini_routes, openai_routes
 import uvicorn
 
-
 # 配置日志
 logger = get_main_logger()
 
@@ -31,14 +30,17 @@ async def startup_event():
     global key_manager
     logger.info("Application starting up...")
     try:
-        # 读取 huggingface 的 dataset 并设置到环境变量中
+        # 从环境变量中获取 Hugging Face 数据集的 ID 和 access token
+        dataset_id = settings.DATASET_ID
+        access_token = settings.ACCESS_TOKEN
         
-        
-        key_manager = await get_key_manager_instance(settings.API_KEYS)
+        # 初始化 KeyManager 实例
+        key_manager = await get_key_manager_instance(dataset_id, access_token)
         logger.info("KeyManager initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize KeyManager: {str(e)}")
         raise
+
 async def get_huggingface_dataset():
     # 获取 huggingface 的 dataset 的数据
     dataset = await get_huggingface_dataset_data()
@@ -82,11 +84,9 @@ app.include_router(openai_routes.router)
 app.include_router(gemini_routes.router)
 app.include_router(gemini_routes.router_v1beta)
 
-
 @app.get("/", response_class=HTMLResponse)
 async def auth_page(request: Request):
     return templates.TemplateResponse("auth.html", {"request": request})
-
 
 @app.post("/auth")
 async def authenticate(request: Request):
@@ -96,7 +96,7 @@ async def authenticate(request: Request):
         if not auth_token:
             logger.warning("Authentication attempt with empty token")
             return RedirectResponse(url="/", status_code=302)
-        
+
         if verify_auth_token(auth_token):
             logger.info("Successful authentication")
             response = RedirectResponse(url="/keys", status_code=302)
@@ -115,7 +115,7 @@ async def keys_page(request: Request):
         if not auth_token or not verify_auth_token(auth_token):
             logger.warning("Unauthorized access attempt to keys page")
             return RedirectResponse(url="/", status_code=302)
-        
+
         keys_status = await key_manager.get_keys_by_status()
         total = len(keys_status["valid_keys"]) + len(keys_status["invalid_keys"])
         logger.info(f"Keys status retrieved successfully. Total keys: {total}")
@@ -129,13 +129,11 @@ async def keys_page(request: Request):
         logger.error(f"Error retrieving keys status: {str(e)}")
         raise
 
-
 @app.get("/health")
 async def health_check(request: Request):
     logger.info("Health check endpoint called")
     return {"status": "healthy"}
-    
-    
+
 if __name__ == "__main__":
     logger.info("Starting application server...")
     uvicorn.run(app, host="0.0.0.0", port=8001)
