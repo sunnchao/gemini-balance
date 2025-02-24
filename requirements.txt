@@ -9,3 +9,5 @@ uvicorn
 google-genai
 jinja2
 python-multipart
+datasets
+huggingface_hub

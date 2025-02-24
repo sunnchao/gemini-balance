@@ -1,12 +1,12 @@
 import asyncio
 from itertools import cycle
 from typing import Dict
+import json
+from datasets import load_dataset
 from app.core.logger import get_key_manager_logger
 from app.core.config import settings
 
-
 logger = get_key_manager_logger()
-
 
 class KeyManager:
     def __init__(self, api_keys: list):
@@ -18,27 +18,30 @@ class KeyManager:
         self.MAX_FAILURES = settings.MAX_FAILURES
         self.paid_key = settings.PAID_KEY
 
+    @staticmethod
+    def fetch_api_keys(dataset_id: str, access_token: str) -> list:
+        """从 Hugging Face dataset 中获取 API keys"""
+        dataset = load_dataset(dataset_id, use_auth_token=access_token)
+        api_keys_json = dataset["train"][:]["api_keys"]  # Assuming there's a column named 'api_keys'
+        return json.loads(api_keys_json)
+
     async def get_paid_key(self) -> str:
         return self.paid_key
-        
+
     async def get_next_key(self) -> str:
-        """获取下一个API key"""
         async with self.key_cycle_lock:
             return next(self.key_cycle)
 
     async def is_key_valid(self, key: str) -> bool:
-        """检查key是否有效"""
         async with self.failure_count_lock:
             return self.key_failure_counts[key] < self.MAX_FAILURES
 
     async def reset_failure_counts(self):
-        """重置所有key的失败计数"""
         async with self.failure_count_lock:
             for key in self.key_failure_counts:
                 self.key_failure_counts[key] = 0
 
     async def get_next_working_key(self) -> str:
-        """获取下一可用的API key"""
         initial_key = await self.get_next_key()
         current_key = initial_key
 
@@ -48,11 +51,9 @@ class KeyManager:
 
             current_key = await self.get_next_key()
             if current_key == initial_key:
-                # await self.reset_failure_counts() 取消重置
                 return current_key
 
     async def handle_api_failure(self, api_key: str) -> str:
-        """处理API调用失败"""
         async with self.failure_count_lock:
             self.key_failure_counts[api_key] += 1
             if self.key_failure_counts[api_key] >= self.MAX_FAILURES:
@@ -63,11 +64,9 @@ class KeyManager:
         return await self.get_next_working_key()
 
     def get_fail_count(self, key: str) -> int:
-        """获取指定密钥的失败次数"""
         return self.key_failure_counts.get(key, 0)
 
     async def get_keys_by_status(self) -> dict:
-        """获取分类后的API key列表，包括失败次数"""
         valid_keys = {}
         invalid_keys = {}
         
@@ -84,22 +83,16 @@ class KeyManager:
             "invalid_keys": invalid_keys
         }
         
-        
 _singleton_instance = None
 _singleton_lock = asyncio.Lock()
 
-async def get_key_manager_instance(api_keys: list = None) -> KeyManager:
-    """
-    获取 KeyManager 单例实例。
-
-    如果尚未创建实例，将使用提供的 api_keys 初始化 KeyManager。
-    如果已创建实例，则忽略 api_keys 参数，返回现有单例。
-    """
+async def get_key_manager_instance(dataset_id: str, access_token: str) -> KeyManager:
     global _singleton_instance
 
     async with _singleton_lock:
         if _singleton_instance is None:
-            if api_keys is None:
-                raise ValueError("API keys are required to initialize the KeyManager")
+            api_keys = KeyManager.fetch_api_keys(dataset_id, access_token)
+            if not api_keys:
+                raise ValueError("API keys could not be fetched from the dataset")
             _singleton_instance = KeyManager(api_keys)
         return _singleton_instance

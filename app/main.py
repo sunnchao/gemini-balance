@@ -31,11 +31,18 @@ async def startup_event():
     global key_manager
     logger.info("Application starting up...")
     try:
+        # 读取 huggingface 的 dataset 并设置到环境变量中
+        
+        
         key_manager = await get_key_manager_instance(settings.API_KEYS)
         logger.info("KeyManager initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize KeyManager: {str(e)}")
         raise
+async def get_huggingface_dataset():
+    # 获取 huggingface 的 dataset 的数据
+    dataset = await get_huggingface_dataset_data()
+    return dataset
 
 # 添加中间件来处理未经身份验证的请求
 @app.middleware("http")
