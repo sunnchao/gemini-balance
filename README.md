@@ -64,18 +64,31 @@
     AUTH_TOKEN=""  # 超级管理员token，具有所有权限，默认使用 ALLOWED_TOKENS 的第一个
 
     # 模型功能配置
-    MODEL_SEARCH=["gemini-2.0-flash-exp"]  # 支持搜索功能的模型列表
+    TEST_MODEL="gemini-1.5-flash" # 用于测试密钥是否可用的模型名
+    SEARCH_MODELS=["gemini-2.0-flash-exp"]  # 支持搜索功能的模型列表
+    IMAGE_MODELS=["gemini-2.0-flash-exp"] # 支持绘图功能的模型列表
     TOOLS_CODE_EXECUTION_ENABLED=false  # 是否启用代码执行工具，默认false
     SHOW_SEARCH_LINK=true  # 是否在响应中显示搜索结果链接，默认true
     SHOW_THINKING_PROCESS=true  # 是否显示模型思考过程，默认true
+    FILTERED_MODELS=["gemini-1.0-pro-vision-latest", "gemini-pro-vision", "chat-bison-001", "text-bison-001", "embedding-gecko-001"] # 被禁用的模型列表
 
     # 图片生成配置
     PAID_KEY="your-paid-api-key"  # 付费版API Key，用于图片生成等高级功能
     CREATE_IMAGE_MODEL="imagen-3.0-generate-002"  # 图片生成模型，默认使用imagen-3.0
     
     # 图片上传配置
-    UPLOAD_PROVIDER="smms"  # 图片上传提供商，目前支持smms
+    UPLOAD_PROVIDER="smms"  # 图片上传提供商，目前支持smms、picgo、cloudflare_imgbed
     SMMS_SECRET_TOKEN="your-smms-token"  # SM.MS图床的API Token
+    PICGO_API_KEY="your-picogo-apikey"  # PicoGo图床的API Key 可在 `https://www.picgo.net/settings/api` 获取
+    CLOUDFLARE_IMGBED_URL="https://xxxxxxx.pages.dev/upload" # CloudFlare 图床上传地址，可自行搭建：`https://github.com/MarSeventh/CloudFlare-ImgBed`
+    CLOUDFLARE_IMGBED_AUTH_CODE="your-cloudflare-imgber-auth-code" # CloudFlare图床的鉴权key，可在项目后台设置，若无鉴权则可直接置空。
+
+    # stream_optimizer 相关配置
+    STREAM_MIN_DELAY=0.016
+    STREAM_MAX_DELAY=0.024
+    STREAM_SHORT_TEXT_THRESHOLD=10
+    STREAM_LONG_TEXT_THRESHOLD=50
+    STREAM_CHUNK_SIZE=5
     ```
 
    ### 配置说明
@@ -105,9 +118,17 @@
 
    #### 模型功能配置
 
-    - `MODEL_SEARCH`: 搜索功能支持的模型
+    - `TEST_MODEL`: 用于测试密钥可用性的模型
+      - 默认值: `"gemini-1.5-flash"`
+    - `SEARCH_MODELS`: 搜索功能支持的模型
       - 默认值: `["gemini-2.0-flash-exp"]`
       - 说明: 仅列表中的模型可使用搜索功能
+    - `IMAGE_MODELS`: 绘图功能支持的模型
+      - 默认值: `["gemini-2.0-flash-exp"]`
+      - 说明: 仅列表中的模型可使用绘图功能
+    - `FILTERED_MODELS`: 被禁用的模型列表
+      - 默认值: `["gemini-1.0-pro-vision-latest", "gemini-pro-vision", "chat-bison-001", "text-bison-001", "embedding-gecko-001"]`
+      - 说明: 列表中的模型将被禁用
     - `TOOLS_CODE_EXECUTION_ENABLED`: 代码执行功能
       - 默认值: `false`
       - 安全提示: 生产环境建议禁用
@@ -131,10 +152,44 @@
 
     - `UPLOAD_PROVIDER`: 图片上传服务提供商
       - 默认值: `smms`
-      - 说明: 目前支持 SM.MS 图床
+      - 可选值: `smms`, `picgo`, `cloudflare_imgbed`
+      - 说明:  用于选择图片上传的服务提供商。目前支持 SM.MS 图床, PicGo 图床, 以及 Cloudflare ImgBed。
+
     - `SMMS_SECRET_TOKEN`: SM.MS API Token
-      - 用途: 用于图片上传到 SM.MS 图床
-      - 获取方式: 需要在 SM.MS 官网注册并获取
+      - 用途: 用于图片上传到 SM.MS 图床的身份验证。
+      - 获取方式: 需要在 [SM.MS 官网](https://sm.ms/) 注册并获取。
+
+    - `PICGO_API_KEY`: PicGo API Key
+      - 用途: 用于图片上传到 PicGo 图床的身份验证。
+      - 获取方式: 可在 [PicGo 官网](https://www.picgo.net/settings/api) 的设置页面 API 选项中获取。
+
+    - `CLOUDFLARE_IMGBED_URL`: Cloudflare ImgBed 上传地址
+      - 用途:  指定 Cloudflare ImgBed 图床的上传 API 地址。
+      - 获取方式:  如果您自行搭建了 Cloudflare ImgBed 服务，请填写您的服务部署地址。参考 [Cloudflare-ImgBed 项目](https://github.com/MarSeventh/CloudFlare-ImgBed) 自行搭建。
+      - 注意:  URL 必须以 `https://` 开头，并指向 `/upload` 路径 ，例如 `https://cloudflare-imgbed-7b0.pages.dev/upload`。
+
+    - `CLOUDFLARE_IMGBED_AUTH_CODE`: Cloudflare ImgBed 鉴权 Key
+      - 用途:  用于 Cloudflare ImgBed 图床的身份验证。
+      - 说明:  如果您的 Cloudflare ImgBed 服务启用了鉴权，请填写鉴权 Key。若未启用鉴权，则留空即可。
+      - 获取方式:  在 Cloudflare ImgBed 项目的后台设置中获取，或在搭建时自行设置。
+
+   #### 流式输出优化配置
+
+    - `STREAM_MIN_DELAY`: 最小延迟时间
+      - 默认值: `0.016`（秒）
+      - 说明: 长文本输出时使用的最小延迟时间，值越小输出速度越快
+    - `STREAM_MAX_DELAY`: 最大延迟时间
+      - 默认值: `0.024`（秒）
+      - 说明: 短文本输出时使用的最大延迟时间，值越大输出速度越慢
+    - `STREAM_SHORT_TEXT_THRESHOLD`: 短文本阈值
+      - 默认值: `10`（字符）
+      - 说明: 小于此长度的文本被视为短文本，将使用最大延迟输出
+    - `STREAM_LONG_TEXT_THRESHOLD`: 长文本阈值
+      - 默认值: `50`（字符）
+      - 说明: 大于此长度的文本被视为长文本，将使用最小延迟并分块输出
+    - `STREAM_CHUNK_SIZE`: 长文本分块大小
+      - 默认值: `5`（字符）
+      - 说明: 长文本分块输出时，每个块的大小
 
 ### ▶️ 运行
 
@@ -208,7 +263,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
                 "content": "你好"
             }
         ],
-        "model": "gemini-1.5-flash-002",
+        "model": "gemini-1.5-flash",
         "temperature": 0.7,
         "stream": false,
         "tools": [],
@@ -221,7 +276,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   - `messages`: 消息列表，格式与 OpenAI API 相同
   - `model`: 模型名称，支持所有Gemini模型，包括:
-    - `gemini-1.5-flash-002`: 快速响应模型
+    - `gemini-1.5-flash`: 快速响应模型
     - `gemini-2.0-flash-exp`: 实验性快速响应模型
     - `gemini-2.0-flash-exp-search`: 支持搜索功能的实验性模型
   - `stream`: 是否开启流式响应，`true` 或 `false`

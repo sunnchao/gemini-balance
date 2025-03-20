@@ -4,6 +4,8 @@ from typing import Dict, Any, AsyncGenerator
 import httpx
 from abc import ABC, abstractmethod
 
+from app.core.constants import DEFAULT_TIMEOUT
+
 
 class ApiClient(ABC):
     """API客户端基类"""
@@ -20,17 +22,25 @@ class ApiClient(ABC):
 class GeminiApiClient(ApiClient):
     """Gemini API客户端"""
 
-    def __init__(self, base_url: str, timeout: int = 300):
+    def __init__(self, base_url: str, timeout: int = DEFAULT_TIMEOUT):
         self.base_url = base_url
         self.timeout = timeout
 
-    def generate_content(self, payload: Dict[str, Any], model: str, api_key: str) -> Dict[str, Any]:
-        timeout = httpx.Timeout(self.timeout, read=self.timeout)
+    def _get_real_model(self, model: str) -> str:
         if model.endswith("-search"):
             model = model[:-7]
-        with httpx.Client(timeout=timeout) as client:
+        if model.endswith("-image"):
+            model = model[:-6]
+
+        return model
+
+    async def generate_content(self, payload: Dict[str, Any], model: str, api_key: str) -> Dict[str, Any]:
+        timeout = httpx.Timeout(self.timeout, read=self.timeout)
+        model = self._get_real_model(model)
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
             url = f"{self.base_url}/models/{model}:generateContent?key={api_key}"
-            response = client.post(url, json=payload)
+            response = await client.post(url, json=payload)
             if response.status_code != 200:
                 error_content = response.text
                 raise Exception(f"API call failed with status code {response.status_code}, {error_content}")
@@ -38,8 +48,8 @@ class GeminiApiClient(ApiClient):
 
     async def stream_generate_content(self, payload: Dict[str, Any], model: str, api_key: str) -> AsyncGenerator[str, None]:
         timeout = httpx.Timeout(self.timeout, read=self.timeout)
-        if model.endswith("-search"):
-            model = model[:-7]
+        model = self._get_real_model(model)
+        
         async with httpx.AsyncClient(timeout=timeout) as client:
             url = f"{self.base_url}/models/{model}:streamGenerateContent?alt=sse&key={api_key}"
             async with client.stream(method="POST", url=url, json=payload) as response:

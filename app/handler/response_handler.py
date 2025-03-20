@@ -1,10 +1,15 @@
 # app/services/chat/response_handler.py
 
+import base64
+import json
+import random
+import string
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 import time
 import uuid
-from app.core.config import settings
+from app.config.config import settings
+from app.utils.uploader import ImageUploaderFactory
 
 
 class ResponseHandler(ABC):
@@ -29,40 +34,38 @@ class GeminiResponseHandler(ResponseHandler):
 
 
 def _handle_openai_stream_response(response: Dict[str, Any], model: str, finish_reason: str) -> Dict[str, Any]:
-    text = _extract_text(response, model, stream=True)
+    text, tool_calls = _extract_result(response, model, stream=True, gemini_format=False)
+    if not text and not tool_calls:
+        delta = {}
+    else:
+        delta = {"content": text, "role": "assistant"}
+        if tool_calls:
+            delta["tool_calls"] = tool_calls
+
     return {
         "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion.chunk",
         "created": int(time.time()),
         "model": model,
-        "choices": [{
-            "index": 0,
-            "delta": {"content": text} if text else {},
-            "finish_reason": finish_reason
-        }]
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
     }
 
 
 def _handle_openai_normal_response(response: Dict[str, Any], model: str, finish_reason: str) -> Dict[str, Any]:
-    text = _extract_text(response, model, stream=False)
+    text, tool_calls = _extract_result(response, model, stream=False, gemini_format=False)
     return {
         "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion",
         "created": int(time.time()),
         "model": model,
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": text
-            },
-            "finish_reason": finish_reason
-        }],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
-        }
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": text, "tool_calls": tool_calls},
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
 
 
@@ -127,74 +130,15 @@ def _handle_openai_normal_image_response(image_str: str,model: str,finish_reason
     }
 
 
-def _extract_text(response: Dict[str, Any], model: str, stream: bool = False) -> str:
-    text = ""
+def _extract_result(response: Dict[str, Any], model: str, stream: bool = False, gemini_format: bool = False) -> tuple[str, List[Dict[str, Any]]]:
+    text, tool_calls = "", []
     if stream:
         if response.get("candidates"):
             candidate = response["candidates"][0]
             content = candidate.get("content", {})
             parts = content.get("parts", [])
-            # if "thinking" in model:
-            #     if settings.SHOW_THINKING_PROCESS:
-            #         if len(parts) == 1:
-            #             if self.thinking_first:
-            #                 self.thinking_first = False
-            #                 self.thinking_status = True
-            #                 text = "> thinking\n\n" + parts[0].get("text")
-            #             else:
-            #                 text = parts[0].get("text")
-
-            #         if len(parts) == 2:
-            #             self.thinking_status = False
-            #             if self.thinking_first:
-            #                 self.thinking_first = False
-            #                 text = (
-            #                     "> thinking\n\n"
-            #                     + parts[0].get("text")
-            #                     + "\n\n---\n> output\n\n"
-            #                     + parts[1].get("text")
-            #                 )
-            #             else:
-            #                 text = (
-            #                     parts[0].get("text")
-            #                     + "\n\n---\n> output\n\n"
-            #                     + parts[1].get("text")
-            #                 )
-            #     else:
-            #         if len(parts) == 1:
-            #             if self.thinking_first:
-            #                 self.thinking_first = False
-            #                 self.thinking_status = True
-            #                 text = ""
-            #             elif self.thinking_status:
-            #                 text = ""
-            #             else:
-            #                 text = parts[0].get("text")
-
-            #         if len(parts) == 2:
-            #             self.thinking_status = False
-            #             if self.thinking_first:
-            #                 self.thinking_first = False
-            #                 text = parts[1].get("text")
-            #             else:
-            #                 text = parts[1].get("text")
-            # else:
-            #     if "text" in parts[0]:
-            #         text = parts[0].get("text")
-            #     elif "executableCode" in parts[0]:
-            #         text = _format_code_block(parts[0]["executableCode"])
-            #     elif "codeExecution" in parts[0]:
-            #         text = _format_code_block(parts[0]["codeExecution"])
-            #     elif "executableCodeResult" in parts[0]:
-            #         text = _format_execution_result(
-            #             parts[0]["executableCodeResult"]
-            #         )
-            #     elif "codeExecutionResult" in parts[0]:
-            #         text = _format_execution_result(
-            #             parts[0]["codeExecutionResult"]
-            #         )
-            #     else:
-            #         text = ""
+            if not parts:
+                return "", []
             if "text" in parts[0]:
                 text = parts[0].get("text")
             elif "executableCode" in parts[0]:
@@ -209,9 +153,12 @@ def _extract_text(response: Dict[str, Any], model: str, stream: bool = False) ->
                 text = _format_execution_result(
                     parts[0]["codeExecutionResult"]
                 )
+            elif "inlineData" in parts[0]:
+                text = _extract_image_data(parts[0])
             else:
                 text = ""
             text = _add_search_link_text(model, candidate, text)
+            tool_calls = _extract_tool_calls(parts, gemini_format)
     else:
         if response.get("candidates"):
             candidate = response["candidates"][0]
@@ -233,24 +180,92 @@ def _extract_text(response: Dict[str, Any], model: str, stream: bool = False) ->
                         text = candidate["content"]["parts"][0]["text"]
             else:
                 text = ""
-                for part in candidate["content"]["parts"]:
-                    text += part["text"]
+                if "parts" in candidate["content"]:
+                    for part in candidate["content"]["parts"]:
+                        if "text" in part:
+                            text += part["text"]
+                        elif "inlineData" in part:
+                            text += _extract_image_data(part)
+
+
             text = _add_search_link_text(model, candidate, text)
+            tool_calls = _extract_tool_calls(candidate["content"]["parts"], gemini_format)
         else:
             text = "暂无返回"
+    return text, tool_calls
+
+def _extract_image_data(part: dict) -> str:
+    image_uploader = None
+    if settings.UPLOAD_PROVIDER == "smms":
+        image_uploader = ImageUploaderFactory.create(provider=settings.UPLOAD_PROVIDER,api_key=settings.SMMS_SECRET_TOKEN)
+    elif settings.UPLOAD_PROVIDER == "picgo":
+        image_uploader = ImageUploaderFactory.create(provider=settings.UPLOAD_PROVIDER,api_key=settings.PICGO_API_KEY)
+    elif settings.UPLOAD_PROVIDER == "cloudflare_imgbed":
+        image_uploader = ImageUploaderFactory.create(provider=settings.UPLOAD_PROVIDER,base_url=settings.CLOUDFLARE_IMGBED_URL,auth_code=settings.CLOUDFLARE_IMGBED_AUTH_CODE)
+    current_date = time.strftime("%Y/%m/%d")
+    filename = f"{current_date}/{uuid.uuid4().hex[:8]}.png"
+    base64_data = part["inlineData"]["data"]
+    #将base64_data转成bytes数组
+    bytes_data = base64.b64decode(base64_data)
+    upload_response = image_uploader.upload(bytes_data,filename)
+    if upload_response.success:
+        text = f"![image]({upload_response.data.url})"
+    else:
+        text = ""
     return text
+    
+def _extract_tool_calls(parts: List[Dict[str, Any]], gemini_format: bool) -> List[Dict[str, Any]]:
+    """提取工具调用信息"""
+    if not parts or not isinstance(parts, list):
+        return []
+
+    letters = string.ascii_lowercase + string.digits
+
+    tool_calls = list()
+    for i in range(len(parts)):
+        part = parts[i]
+        if not part or not isinstance(part, dict):
+            continue
+
+        item = part.get("functionCall", {})
+        if not item or not isinstance(item, dict):
+            continue
+
+        if gemini_format:
+            tool_calls.append(part)
+        else:
+            id = f"call_{''.join(random.sample(letters, 32))}"
+            name = item.get("name", "")
+            arguments = json.dumps(item.get("args", None) or {})
+
+            tool_calls.append(
+                {
+                    "index": i,
+                    "id": id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": arguments},
+                }
+            )
+
+    return tool_calls
 
 
 def _handle_gemini_stream_response(response: Dict[str, Any], model: str, stream: bool) -> Dict[str, Any]:
-    text = _extract_text(response, model, stream=stream)
-    content = {"parts": [{"text": text}], "role": "model"}
+    text, tool_calls = _extract_result(response, model, stream=stream, gemini_format=True)
+    if tool_calls:
+        content = {"parts": tool_calls, "role": "model"}
+    else:
+        content = {"parts": [{"text": text}], "role": "model"}
     response["candidates"][0]["content"] = content
     return response
 
 
 def _handle_gemini_normal_response(response: Dict[str, Any], model: str, stream: bool) -> Dict[str, Any]:
-    text = _extract_text(response, model, stream=stream)
-    content = {"parts": [{"text": text}], "role": "model"}
+    text, tool_calls = _extract_result(response, model, stream=stream, gemini_format=True)
+    if tool_calls:
+        content = {"parts": tool_calls, "role": "model"}
+    else:
+        content = {"parts": [{"text": text}], "role": "model"}
     response["candidates"][0]["content"] = content
     return response
 
